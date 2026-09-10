@@ -16,18 +16,33 @@ st.set_page_config(
 # Compact High-Density UI CSS
 st.markdown("""
 <style>
-    .block-container { padding-top: 1.2rem; padding-bottom: 2rem; padding-left: 2rem; padding-right: 2rem; }
+    .block-container { padding-top: 1.0rem; padding-bottom: 2rem; padding-left: 1.8rem; padding-right: 1.8rem; }
     div[data-testid="stMetricValue"] { font-size: 1.25rem !important; }
     div[data-testid="stMetricLabel"] { font-size: 0.8rem !important; }
     .stDataFrame { font-size: 0.78rem !important; }
     button[kind="primary"] { padding: 0.25rem 0.75rem !important; }
     .stTabs [data-baseweb="tab-list"] { gap: 8px; }
     .stTabs [data-baseweb="tab"] { padding-top: 4px; padding-bottom: 4px; font-size: 0.88rem; }
+    .number-in-words { color: #38BDF8; font-size: 0.82rem; margin-top: -12px; margin-bottom: 8px; font-weight: 500; }
 </style>
 """, unsafe_allow_html=True)
 
 CSV_FILE = "data/paper_trades.csv"
-LOT_SIZE = 65  # Nifty 50 Standard Contract Lot Size
+README_FILE = "README.md"
+LOT_SIZE = 65  # Nifty 50 Contract Lot Size
+
+def format_inr_in_words(num: float) -> str:
+    """Converts raw numeric value into Indian numbering system text (Lakh / Crore)."""
+    if num >= 10000000.0:
+        cr = num / 10000000.0
+        return f"₹ {cr:.2f} Crore"
+    elif num >= 100000.0:
+        lakh = num / 100000.0
+        return f"₹ {lakh:.2f} Lakh"
+    elif num >= 1000.0:
+        k = num / 1000.0
+        return f"₹ {k:.2f} Thousand"
+    return f"₹ {num:,.2f}"
 
 # Ensure paper trading CSV exists
 if not os.path.exists(CSV_FILE):
@@ -54,7 +69,7 @@ with h1:
 with h2:
     st.metric("Nifty 50 Spot (Live CMP)", f"{nifty_spot:,.2f}")
 with h3:
-    sentiment_tag = "Bearish Trend" if india_vix > 16.5 else ("Neutral / Balanced" if india_vix > 13.0 else "Bullish Bias")
+    sentiment_tag = "High Volatility" if india_vix > 16.5 else ("Neutral / Balanced" if india_vix > 13.0 else "Low Volatility")
     st.metric("India VIX & Regime", f"{india_vix} %", delta=sentiment_tag, delta_color="inverse")
 with h4:
     st.write("")
@@ -72,15 +87,58 @@ tab_advisor, tab_paper, tab_analytics = st.tabs([
 # TAB 1: ADVISORY & STRATEGY COMPARISON
 # ==========================================
 with tab_advisor:
+    # Header row with README Documentation Launcher
+    top_c1, top_c2 = st.columns([4, 1.2])
+    with top_c1:
+        st.write("Configure your active equity exposure and risk tolerance to compute optimal contract sizing:")
+    with top_c2:
+        # README Modal Dialogue trigger
+        if os.path.exists(README_FILE):
+            with open(README_FILE, "r", encoding="utf-8") as f:
+                readme_content = f.read()
+            with st.popover("📖 Read Parameter Guide", use_container_width=True):
+                st.markdown(readme_content)
+        else:
+            st.caption("README.md available in repo")
+
     c_in1, c_in2, c_in3, c_in4 = st.columns(4)
     with c_in1:
-        portfolio_val = st.number_input("Portfolio Net Value (₹)", min_value=100000.0, value=2500000.0, step=50000.0)
+        portfolio_val = st.number_input(
+            "Portfolio Net Value (₹)", 
+            min_value=100000.0, 
+            value=2500000.0, 
+            step=50000.0,
+            help="Total equity market value of all stock holdings/mutual funds you wish to hedge."
+        )
+        # Reflect in words
+        words_label = format_inr_in_words(portfolio_val)
+        st.markdown(f"<div class='number-in-words'>{words_label}</div>", unsafe_allow_html=True)
+        
     with c_in2:
-        portfolio_beta = st.number_input("Portfolio Beta (β)", min_value=0.50, max_value=2.50, value=1.15, step=0.05)
+        portfolio_beta = st.number_input(
+            "Portfolio Beta (β)", 
+            min_value=0.50, 
+            max_value=2.50, 
+            value=1.15, 
+            step=0.05,
+            help="Weighted volatility vs Nifty 50. 1.0 = Large-caps; >1.2 = Mid/Small-cap heavy."
+        )
+        st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
     with c_in3:
-        downside_tol = st.slider("Absorbable Market Drop (%)", min_value=0.0, max_value=10.0, value=4.0, step=0.5)
+        downside_tol = st.slider(
+            "Absorbable Market Drop (%)", 
+            min_value=0.0, 
+            max_value=10.0, 
+            value=4.0, 
+            step=0.5,
+            help="How much drop you willingly absorb as a deductible before the put protection kicks in."
+        )
     with c_in4:
-        target_horizon = st.selectbox("Hedge Horizon / Expiry", ["Next Month End (35D)", "Quarterly (65D)", "Far Forward (95D)"])
+        target_horizon = st.selectbox(
+            "Hedge Horizon / Expiry", 
+            ["Next Month End (35D)", "Quarterly (65D)", "Far Forward (95D)"],
+            help="Option maturity period. Longer maturities experience significantly slower theta decay."
+        )
 
     # Core Quant Calculations
     effective_exposure = portfolio_val * portfolio_beta
@@ -90,7 +148,6 @@ with tab_advisor:
 
     # Available Synthetic Options Surface calibrated to Nifty Spot
     exp_date = (datetime.today() + timedelta(days=35 if "35D" in target_horizon else (65 if "65D" in target_horizon else 95))).strftime("%d-%b-%Y")
-    atm_strike = int(round(nifty_spot / 50.0) * 50)
     otm_strike_primary = int(round((nifty_spot * (1.0 - (downside_tol / 100.0))) / 50.0) * 50)
     otm_strike_lower = otm_strike_primary - 800
     otm_call_strike = int(round((nifty_spot * 1.045) / 50.0) * 50)
@@ -102,7 +159,7 @@ with tab_advisor:
     call_credit_prem = round(nifty_spot * 0.0095 + (india_vix * 1.8), 2)
 
     st.markdown("---")
-    st.subheader(f"📊 Evaluated Protection Strategies (Hedge Sizing: {optimal_lots} Lots | {total_qty} Units | Exposure Covered: ₹{round(single_contract_val * optimal_lots):,})")
+    st.subheader(f"📊 Evaluated Protection Strategies (Sizing: {optimal_lots} Lots | {total_qty} Units | Covered Exposure: {format_inr_in_words(single_contract_val * optimal_lots)})")
 
     # Strategy 1: Out-of-the-Money Protective Put
     s1_charges = compute_zerodha_fo_charges("BUY", otm_strike_primary, otm_put_prem, total_qty)
@@ -121,7 +178,7 @@ with tab_advisor:
             "Strategy": "1. OTM Protective Put (Recommended)",
             "Structure": f"Buy {otm_strike_primary} PE",
             "Gross Premium (₹)": f"₹ {otm_put_prem:.2f}",
-            "Zerodha Taxes & Brokerage (₹)": f"₹ {s1_charges['total_charges']:.2f}",
+            "Zerodha Friction (₹)": f"₹ {s1_charges['total_charges']:.2f}",
             "Max Downside Loss on Hedge": f"₹ {s1_charges['net_cost']:,.2f} (Capped)",
             "Downside Protection": "Unlimited below deductible",
             "Portfolio Drag (%)": f"{(s1_charges['net_cost'] / portfolio_val) * 100:.2f}%",
@@ -131,7 +188,7 @@ with tab_advisor:
             "Strategy": "2. Bear Put Spread (Cost-Optimized)",
             "Structure": f"Buy {otm_strike_primary} PE + Sell {otm_strike_lower} PE",
             "Gross Premium (₹)": f"₹ {s2_net_prem:.2f}",
-            "Zerodha Taxes & Brokerage (₹)": f"₹ {s2_total_charges:.2f}",
+            "Zerodha Friction (₹)": f"₹ {s2_total_charges:.2f}",
             "Max Downside Loss on Hedge": f"₹ {(s2_net_prem * total_qty) + s2_total_charges:,.2f} (Capped)",
             "Downside Protection": f"Capped between {otm_strike_primary} & {otm_strike_lower}",
             "Portfolio Drag (%)": f"{(((s2_net_prem * total_qty) + s2_total_charges) / portfolio_val) * 100:.2f}%",
@@ -141,7 +198,7 @@ with tab_advisor:
             "Strategy": "3. Zero-Cost Collar (Upside Capped)",
             "Structure": f"Buy {otm_strike_primary} PE + Sell {otm_call_strike} CE",
             "Gross Premium (₹)": f"₹ {s3_net_prem:.2f}",
-            "Zerodha Taxes & Brokerage (₹)": f"₹ {s3_total_charges:.2f}",
+            "Zerodha Friction (₹)": f"₹ {s3_total_charges:.2f}",
             "Max Downside Loss on Hedge": f"₹ {(s3_net_prem * total_qty) + s3_total_charges:,.2f} (Capped)",
             "Downside Protection": f"Floored at {otm_strike_primary}; Caps upside at {otm_call_strike}",
             "Portfolio Drag (%)": f"{(((s3_net_prem * total_qty) + s3_total_charges) / portfolio_val) * 100:.2f}%",
@@ -151,7 +208,6 @@ with tab_advisor:
 
     st.dataframe(pd.DataFrame(comparison_data).drop(columns=["Action Key"]), use_container_width=True, hide_index=True)
 
-    # Detailed Zerodha Fee Breakdown Expander
     with st.expander("🔍 Detailed Zerodha Regulatory & Statutory Charge Breakdown (Strategy 1)"):
         f1, f2, f3, f4, f5 = st.columns(5)
         f1.metric("Flat Brokerage", f"₹ {s1_charges['brokerage']}")
@@ -160,7 +216,6 @@ with tab_advisor:
         f4.metric("GST @ 18%", f"₹ {s1_charges['gst']}")
         f5.metric("Total Friction", f"₹ {s1_charges['total_charges']}")
 
-    # Quick One-Click Paper Trade Execution
     st.write("##### ⚡ Direct Paper Trade Execution")
     col_exec1, col_exec2, _ = st.columns([2, 2, 4])
     with col_exec1:
@@ -218,12 +273,10 @@ with tab_paper:
     if df_trades.empty:
         st.info("No paper trades logged yet. Deploy a hedge from the 'Hedging Advisory' tab.")
     else:
-        # Update live mark-to-market prices based on spot jitter
         for idx, row in df_trades.iterrows():
             if row["status"] == "ACTIVE":
-                # Simulated option price adjustment based on distance to spot
                 base_p = row["entry_price"]
-                market_drift = (24850.0 - nifty_spot) * 0.45  # Put option gains value as market falls
+                market_drift = (24850.0 - nifty_spot) * 0.45
                 live_p = max(0.50, round(base_p + market_drift + np.random.uniform(-1.5, 1.5), 2))
                 cur_val = round(live_p * row["qty"], 2)
                 unrealized = round(cur_val - row["total_invested"], 2)
@@ -234,7 +287,6 @@ with tab_paper:
 
         df_trades.to_csv(CSV_FILE, index=False)
 
-        # Style active trades
         def color_pnl(val):
             color = "#10B981" if val > 0 else "#EF4444" if val < 0 else "#94A3B8"
             return f"color: {color}; font-weight: bold;"
@@ -249,7 +301,6 @@ with tab_paper:
             hide_index=True
         )
 
-        # Square-off controller
         st.write("##### ⚡ Exit / Square-Off Active Position")
         c_ex1, c_ex2, _ = st.columns([3, 2, 3])
         with c_ex1:
@@ -291,14 +342,11 @@ with tab_analytics:
     kp5.metric("Unrealized MTM", f"₹ {net_unrealized:,.2f}", delta=f"{net_unrealized:,.2f}")
 
     st.markdown("---")
-    # Payoff Scenario Graph
     st.subheader("📉 Simulated Portfolio Drawdown vs. Option Payoff Curve")
     
     market_shifts = np.linspace(-15, 10, 25)
     portfolio_pnl = [portfolio_val * (shift / 100.0) * portfolio_beta for shift in market_shifts]
     
-    # Intrinsic value of OTM Put at expiry minus cost
-    put_strike_drop = (nifty_spot - otm_strike_primary)
     option_pnl = [
         (max(0.0, (otm_strike_primary - (nifty_spot * (1 + shift / 100.0)))) * total_qty) - s1_charges["net_cost"] 
         for shift in market_shifts
