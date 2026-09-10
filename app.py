@@ -67,13 +67,27 @@ with h1:
     st.title("🛡️ Institutional Portfolio Hedging Engine")
     st.caption("Live Downside Insurance Optimizer, Zerodha Fee Engine & Paper Tracker")
 with h2:
-    st.metric("Nifty 50 Spot (Live CMP)", f"{nifty_spot:,.2f}")
+    st.metric(
+        "Nifty 50 Spot (Live CMP)", 
+        f"{nifty_spot:,.2f}",
+        help="Real-time Current Market Price (CMP) of the Nifty 50 Index benchmark. All options strike chains and valuations are derived from this value."
+    )
 with h3:
     sentiment_tag = "High Volatility" if india_vix > 16.5 else ("Neutral / Balanced" if india_vix > 13.0 else "Low Volatility")
-    st.metric("India VIX & Regime", f"{india_vix} %", delta=sentiment_tag, delta_color="inverse")
+    st.metric(
+        "India VIX & Regime", 
+        f"{india_vix} %", 
+        delta=sentiment_tag, 
+        delta_color="inverse",
+        help="India VIX measures annualized expected 30-day market volatility. VIX < 13 = Cheap options; 13–16.5 = Balanced/Fair; > 16.5 = Expensive options premiums due to heightened market fear."
+    )
 with h4:
     st.write("")
-    if st.button("🔄 Refresh CMP", use_container_width=True):
+    if st.button(
+        "🔄 Refresh CMP", 
+        use_container_width=True,
+        help="Click to re-fetch live market price ticks, update India VIX, and recalculate all active paper trade Mark-to-Market (MTM) values."
+    ):
         st.session_state["market_seed"] = np.random.randint(1, 10000)
         st.rerun()
 
@@ -87,16 +101,14 @@ tab_advisor, tab_paper, tab_analytics = st.tabs([
 # TAB 1: ADVISORY & STRATEGY COMPARISON
 # ==========================================
 with tab_advisor:
-    # Header row with README Documentation Launcher
     top_c1, top_c2 = st.columns([4, 1.2])
     with top_c1:
         st.write("Configure your active equity exposure and risk tolerance to compute optimal contract sizing:")
     with top_c2:
-        # README Modal Dialogue trigger
         if os.path.exists(README_FILE):
             with open(README_FILE, "r", encoding="utf-8") as f:
                 readme_content = f.read()
-            with st.popover("📖 Read Parameter Guide", use_container_width=True):
+            with st.popover("📖 Read Parameter Guide", use_container_width=True, help="Click to open the complete user guide explaining all parameters, formulas, and strategies in detail."):
                 st.markdown(readme_content)
         else:
             st.caption("README.md available in repo")
@@ -108,9 +120,8 @@ with tab_advisor:
             min_value=100000.0, 
             value=2500000.0, 
             step=50000.0,
-            help="Total equity market value of all stock holdings/mutual funds you wish to hedge."
+            help="Total equity market value of all stock holdings/mutual funds you want to protect. Cash and debt components should be excluded."
         )
-        # Reflect in words
         words_label = format_inr_in_words(portfolio_val)
         st.markdown(f"<div class='number-in-words'>{words_label}</div>", unsafe_allow_html=True)
         
@@ -121,7 +132,7 @@ with tab_advisor:
             max_value=2.50, 
             value=1.15, 
             step=0.05,
-            help="Weighted volatility vs Nifty 50. 1.0 = Large-caps; >1.2 = Mid/Small-cap heavy."
+            help="Portfolio volatility relative to Nifty 50.\n• 0.85–1.00: Large-caps (TCS, HDFC Bank, Reliance)\n• 1.10–1.25: Flexi-cap/Multi-cap funds\n• 1.30–1.60+: Mid-cap & Small-cap heavy portfolios.\nHigher Beta requires proportionally more lots to hedge effectively."
         )
         st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
     with c_in3:
@@ -131,13 +142,13 @@ with tab_advisor:
             max_value=10.0, 
             value=4.0, 
             step=0.5,
-            help="How much drop you willingly absorb as a deductible before the put protection kicks in."
+            help="Acts as your insurance deductible. A 4% value means you absorb the first 4% drop in the market out-of-pocket, and the Put option strike starts protecting below that. Setting this to 3%–5% cuts option premium costs by ~60% compared to At-The-Money (0%) options."
         )
     with c_in4:
         target_horizon = st.selectbox(
             "Hedge Horizon / Expiry", 
             ["Next Month End (35D)", "Quarterly (65D)", "Far Forward (95D)"],
-            help="Option maturity period. Longer maturities experience significantly slower theta decay."
+            help="Tenor of the options contract.\n• 35D: Best for specific binary events (e.g., Union Budget, Election results).\n• 65D (Quarterly): Optimal balance of slow time decay (theta) and liquid market pricing.\n• 95D: For long-term macro drawdown protection."
         )
 
     # Core Quant Calculations
@@ -146,29 +157,25 @@ with tab_advisor:
     optimal_lots = max(1, int(round(effective_exposure / single_contract_val)))
     total_qty = optimal_lots * LOT_SIZE
 
-    # Available Synthetic Options Surface calibrated to Nifty Spot
     exp_date = (datetime.today() + timedelta(days=35 if "35D" in target_horizon else (65 if "65D" in target_horizon else 95))).strftime("%d-%b-%Y")
     otm_strike_primary = int(round((nifty_spot * (1.0 - (downside_tol / 100.0))) / 50.0) * 50)
     otm_strike_lower = otm_strike_primary - 800
     otm_call_strike = int(round((nifty_spot * 1.045) / 50.0) * 50)
 
-    # Base pricing model
+    # Pricing models
     otm_put_prem = round(nifty_spot * 0.0115 + (india_vix * 2.5), 2)
-    atm_put_prem = round(nifty_spot * 0.0240 + (india_vix * 4.2), 2)
     lower_put_prem = round(otm_put_prem * 0.38, 2)
     call_credit_prem = round(nifty_spot * 0.0095 + (india_vix * 1.8), 2)
 
     st.markdown("---")
     st.subheader(f"📊 Evaluated Protection Strategies (Sizing: {optimal_lots} Lots | {total_qty} Units | Covered Exposure: {format_inr_in_words(single_contract_val * optimal_lots)})")
 
-    # Strategy 1: Out-of-the-Money Protective Put
+    # Strategy Calculations
     s1_charges = compute_zerodha_fo_charges("BUY", otm_strike_primary, otm_put_prem, total_qty)
-    # Strategy 2: Bear Put Spread
     s2_buy_chg = compute_zerodha_fo_charges("BUY", otm_strike_primary, otm_put_prem, total_qty)
     s2_sell_chg = compute_zerodha_fo_charges("SELL", otm_strike_lower, lower_put_prem, total_qty)
     s2_net_prem = otm_put_prem - lower_put_prem
     s2_total_charges = s2_buy_chg["total_charges"] + s2_sell_chg["total_charges"]
-    # Strategy 3: Zero-Cost Collar
     s3_sell_chg = compute_zerodha_fo_charges("SELL", otm_call_strike, call_credit_prem, total_qty)
     s3_net_prem = max(0.0, otm_put_prem - call_credit_prem)
     s3_total_charges = s1_charges["total_charges"] + s3_sell_chg["total_charges"]
@@ -181,8 +188,7 @@ with tab_advisor:
             "Zerodha Friction (₹)": f"₹ {s1_charges['total_charges']:.2f}",
             "Max Downside Loss on Hedge": f"₹ {s1_charges['net_cost']:,.2f} (Capped)",
             "Downside Protection": "Unlimited below deductible",
-            "Portfolio Drag (%)": f"{(s1_charges['net_cost'] / portfolio_val) * 100:.2f}%",
-            "Action Key": "PROT_PUT"
+            "Portfolio Drag (%)": f"{(s1_charges['net_cost'] / portfolio_val) * 100:.2f}%"
         },
         {
             "Strategy": "2. Bear Put Spread (Cost-Optimized)",
@@ -191,8 +197,7 @@ with tab_advisor:
             "Zerodha Friction (₹)": f"₹ {s2_total_charges:.2f}",
             "Max Downside Loss on Hedge": f"₹ {(s2_net_prem * total_qty) + s2_total_charges:,.2f} (Capped)",
             "Downside Protection": f"Capped between {otm_strike_primary} & {otm_strike_lower}",
-            "Portfolio Drag (%)": f"{(((s2_net_prem * total_qty) + s2_total_charges) / portfolio_val) * 100:.2f}%",
-            "Action Key": "BEAR_SPREAD"
+            "Portfolio Drag (%)": f"{(((s2_net_prem * total_qty) + s2_total_charges) / portfolio_val) * 100:.2f}%"
         },
         {
             "Strategy": "3. Zero-Cost Collar (Upside Capped)",
@@ -201,28 +206,49 @@ with tab_advisor:
             "Zerodha Friction (₹)": f"₹ {s3_total_charges:.2f}",
             "Max Downside Loss on Hedge": f"₹ {(s3_net_prem * total_qty) + s3_total_charges:,.2f} (Capped)",
             "Downside Protection": f"Floored at {otm_strike_primary}; Caps upside at {otm_call_strike}",
-            "Portfolio Drag (%)": f"{(((s3_net_prem * total_qty) + s3_total_charges) / portfolio_val) * 100:.2f}%",
-            "Action Key": "COLLAR"
+            "Portfolio Drag (%)": f"{(((s3_net_prem * total_qty) + s3_total_charges) / portfolio_val) * 100:.2f}%"
         }
     ]
 
-    st.dataframe(pd.DataFrame(comparison_data).drop(columns=["Action Key"]), use_container_width=True, hide_index=True)
+    st.dataframe(
+        pd.DataFrame(comparison_data), 
+        use_container_width=True, 
+        hide_index=True,
+        column_config={
+            "Strategy": st.column_config.TextColumn("Strategy", help="Name of the derivative hedging structure."),
+            "Structure": st.column_config.TextColumn("Structure", help="Exact option contracts (strikes & types) to be traded on NSE."),
+            "Gross Premium (₹)": st.column_config.TextColumn("Gross Premium (₹)", help="Per-unit net premium payable in the open market."),
+            "Zerodha Friction (₹)": st.column_config.TextColumn("Zerodha Friction (₹)", help="All statutory and broker charges (Brokerage, STT, NSE Exchange fees, SEBI charges, Stamp duty, GST)."),
+            "Max Downside Loss on Hedge": st.column_config.TextColumn("Max Downside Loss on Hedge", help="The absolute maximum cash you can lose on this hedge if the market rallies to new all-time highs (strictly capped at premium + charges)."),
+            "Downside Protection": st.column_config.TextColumn("Downside Protection", help="Extent of cash protection if a severe market collapse occurs."),
+            "Portfolio Drag (%)": st.column_config.TextColumn("Portfolio Drag (%)", help="The percentage cost of this insurance relative to your total equity portfolio. Aim to keep this below 1.5% per quarter.")
+        }
+    )
 
-    with st.expander("🔍 Detailed Zerodha Regulatory & Statutory Charge Breakdown (Strategy 1)"):
+    with st.expander("🔍 Detailed Zerodha Regulatory & Statutory Charge Breakdown (Strategy 1)", expanded=False):
         f1, f2, f3, f4, f5 = st.columns(5)
-        f1.metric("Flat Brokerage", f"₹ {s1_charges['brokerage']}")
-        f2.metric("Exchange Turnover (NSE)", f"₹ {s1_charges['exchange_charges']}")
-        f3.metric("Stamp Duty", f"₹ {s1_charges['stamp_duty']}")
-        f4.metric("GST @ 18%", f"₹ {s1_charges['gst']}")
-        f5.metric("Total Friction", f"₹ {s1_charges['total_charges']}")
+        f1.metric("Flat Brokerage", f"₹ {s1_charges['brokerage']}", help="Zerodha flat fee: ₹20 per executed order.")
+        f2.metric("Exchange Turnover (NSE)", f"₹ {s1_charges['exchange_charges']}", help="NSE exchange fee: 0.05% of gross premium turnover.")
+        f3.metric("Stamp Duty", f"₹ {s1_charges['stamp_duty']}", help="State stamp duty: 0.003% (₹300/Cr) on buy-side orders.")
+        f4.metric("GST @ 18%", f"₹ {s1_charges['gst']}", help="18% Goods & Services Tax on (Brokerage + Exchange Fees + SEBI charges).")
+        f5.metric("Total Friction", f"₹ {s1_charges['total_charges']}", help="Total cash deducted from your ledger purely for execution and taxes.")
 
     st.write("##### ⚡ Direct Paper Trade Execution")
     col_exec1, col_exec2, _ = st.columns([2, 2, 4])
     with col_exec1:
-        trade_strat = st.selectbox("Select Strategy to Paper Trade", ["1. OTM Protective Put", "2. Bear Put Spread", "3. Zero-Cost Collar"])
+        trade_strat = st.selectbox(
+            "Select Strategy to Paper Trade", 
+            ["1. OTM Protective Put", "2. Bear Put Spread", "3. Zero-Cost Collar"],
+            help="Select which of the three evaluated hedging structures you wish to log into your persistent paper trading book."
+        )
     with col_exec2:
         st.write("")
-        if st.button("🚀 Execute Paper Trade to CSV", type="primary", use_container_width=True):
+        if st.button(
+            "🚀 Execute Paper Trade to CSV", 
+            type="primary", 
+            use_container_width=True,
+            help="Saves this virtual trade with real-world Zerodha fees to data/paper_trades.csv so you can monitor live Mark-to-Market P&L."
+        ):
             df_trades = pd.read_csv(CSV_FILE)
             tid = f"TRD-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
             
@@ -298,17 +324,40 @@ with tab_paper:
                 "total_invested", "current_value", "unrealized_pnl", "status"
             ]].style.map(color_pnl, subset=["unrealized_pnl"]),
             use_container_width=True,
-            hide_index=True
+            hide_index=True,
+            column_config={
+                "trade_id": st.column_config.TextColumn("Trade ID", help="Unique identifier for the paper trade execution."),
+                "timestamp": st.column_config.TextColumn("Timestamp", help="Date and time when the position was initiated."),
+                "strategy": st.column_config.TextColumn("Strategy", help="The hedging strategy selected."),
+                "isin_symbol": st.column_config.TextColumn("Symbol / Strike", help="Contract symbol, expiry date, and strikes traded."),
+                "entry_price": st.column_config.NumberColumn("Entry Premium (₹)", format="₹ %.2f", help="Original option price paid per unit at entry."),
+                "cmp": st.column_config.NumberColumn("CMP (₹)", format="₹ %.2f", help="Current live market price per unit based on real-time Nifty spot movements."),
+                "qty": st.column_config.NumberColumn("Quantity", help="Total units traded (Lots × 65)."),
+                "entry_charges": st.column_config.NumberColumn("Entry Taxes (₹)", format="₹ %.2f", help="Total Zerodha F&O taxes and brokerage paid at trade entry."),
+                "total_invested": st.column_config.NumberColumn("Total Invested (₹)", format="₹ %.2f", help="Total cash outflow = (Entry Price × Qty) + Entry Charges."),
+                "current_value": st.column_config.NumberColumn("Current Value (₹)", format="₹ %.2f", help="Current liquidation value = CMP × Qty."),
+                "unrealized_pnl": st.column_config.NumberColumn("Unrealized MTM (₹)", format="₹ %.2f", help="Live mark-to-market profit or loss including entry friction."),
+                "status": st.column_config.TextColumn("Status", help="ACTIVE = Currently open position; CLOSED = Squared-off position.")
+            }
         )
 
         st.write("##### ⚡ Exit / Square-Off Active Position")
         c_ex1, c_ex2, _ = st.columns([3, 2, 3])
         with c_ex1:
             active_ids = df_trades[df_trades["status"] == "ACTIVE"]["trade_id"].tolist()
-            selected_trade = st.selectbox("Select Trade ID to Close", active_ids if active_ids else ["None"])
+            selected_trade = st.selectbox(
+                "Select Trade ID to Close", 
+                active_ids if active_ids else ["None"],
+                help="Pick an active trade ID to simulate an immediate sell/square-off at the current market price."
+            )
         with c_ex2:
             st.write("")
-            if st.button("Close Position & Realize P&L", type="secondary", disabled=(not active_ids)):
+            if st.button(
+                "Close Position & Realize P&L", 
+                type="secondary", 
+                disabled=(not active_ids),
+                help="Squares off the position, calculates sell-side Zerodha STT and turnover fees, and locks in the final realized P&L."
+            ):
                 target_idx = df_trades[df_trades["trade_id"] == selected_trade].index[0]
                 row = df_trades.loc[target_idx]
                 exit_chg = compute_zerodha_fo_charges("SELL", row["strike"], row["cmp"], row["qty"])["total_charges"]
@@ -335,11 +384,33 @@ with tab_analytics:
     net_realized = df_trades["realized_pnl"].sum()
     net_unrealized = df_trades["unrealized_pnl"].sum()
 
-    kp1.metric("Total Paper Hedges", total_trades)
-    kp2.metric("Active Insurances", active_hedges)
-    kp3.metric("Total Friction (Zerodha)", f"₹ {total_friction_paid:,.2f}")
-    kp4.metric("Net Realized P&L", f"₹ {net_realized:,.2f}", delta=f"{net_realized:,.2f}")
-    kp5.metric("Unrealized MTM", f"₹ {net_unrealized:,.2f}", delta=f"{net_unrealized:,.2f}")
+    kp1.metric(
+        "Total Paper Hedges", 
+        total_trades,
+        help="Total number of derivative hedges created since book inception."
+    )
+    kp2.metric(
+        "Active Insurances", 
+        active_hedges,
+        help="Number of active, currently open option hedge contracts protecting your equity holdings."
+    )
+    kp3.metric(
+        "Total Friction (Zerodha)", 
+        f"₹ {total_friction_paid:,.2f}",
+        help="Cumulative total of brokerage, STT, exchange turnover fees, SEBI charges, stamp duty, and GST paid across all entries and exits."
+    )
+    kp4.metric(
+        "Net Realized P&L", 
+        f"₹ {net_realized:,.2f}", 
+        delta=f"{net_realized:,.2f}",
+        help="Final locked-in profit or loss from all closed/squared-off paper hedges (after deducting all Zerodha charges)."
+    )
+    kp5.metric(
+        "Unrealized MTM", 
+        f"₹ {net_unrealized:,.2f}", 
+        delta=f"{net_unrealized:,.2f}",
+        help="Floating Mark-to-Market (MTM) P&L of all currently active open contracts. This value offsets portfolio drawdowns during market declines."
+    )
 
     st.markdown("---")
     st.subheader("📉 Simulated Portfolio Drawdown vs. Option Payoff Curve")
@@ -368,4 +439,8 @@ with tab_analytics:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    st.info("💡 **Feedback Enhancement Loop**: If total friction paid exceeds 1.5% of portfolio value annually, adjust criteria to increase OTM distance from 4% to 6% or switch from long puts to Bear Put Spreads to minimize time-decay drag.")
+    st.info(
+        "💡 **Feedback Enhancement Loop**: If cumulative friction paid exceeds 1.5% of your portfolio value annually, "
+        "adjust your criteria by widening OTM distance (e.g., from 4% to 6%) or switching to Bear Put Spreads to mitigate theta decay.",
+        icon="ℹ️"
+    )
