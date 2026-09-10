@@ -24,6 +24,7 @@ st.markdown("""
     .stTabs [data-baseweb="tab-list"] { gap: 8px; }
     .stTabs [data-baseweb="tab"] { padding-top: 4px; padding-bottom: 4px; font-size: 0.88rem; }
     .number-in-words { color: #38BDF8; font-size: 0.82rem; margin-top: -12px; margin-bottom: 8px; font-weight: 500; }
+    .drop-in-words { color: #38BDF8; font-size: 0.82rem; margin-top: -8px; margin-bottom: 8px; font-weight: 500; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -144,6 +145,11 @@ with tab_advisor:
             step=0.5,
             help="Acts as your insurance deductible. A 4% value means you absorb the first 4% drop in the market out-of-pocket, and the Put option strike starts protecting below that. Setting this to 3%–5% cuts option premium costs by ~60% compared to At-The-Money (0%) options."
         )
+        # Calculate exact monetary value of the absorbed drop
+        absorbed_rupees = portfolio_val * (downside_tol / 100.0)
+        absorbed_words = format_inr_in_words(absorbed_rupees)
+        st.markdown(f"<div class='drop-in-words'>Equivalent to {absorbed_words} absorbed</div>", unsafe_allow_html=True)
+        
     with c_in4:
         target_horizon = st.selectbox(
             "Hedge Horizon / Expiry", 
